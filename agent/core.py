@@ -1,0 +1,295 @@
+import requests
+import json
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# Load environment variables
+load_dotenv()
+
+class BaseAgent:
+    def __init__(self, name, mcp_url="http://localhost:8000", api_key=None, vt_api_key=None):
+        self.name = name
+        self.mcp_url = mcp_url
+        self.vt_api_key = vt_api_key or os.getenv("VIRUSTOTAL_API_KEY")
+        
+        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
+        
+        if self.api_key:
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url="https://api.deepseek.com"
+            )
+        else:
+            self.client = None
+
+    def log(self, message, callback=None):
+        entry = f"[{self.name}] {message}"
+        print(entry)
+        if callback:
+            callback(entry)
+        return entry
+
+    def get_tools(self, tool_names):
+        """Fetches specific tools from MCP server."""
+        try:
+            response = requests.get(f"{self.mcp_url}/tools")
+            if response.status_code == 200:
+                all_tools = response.json()
+                filtered = [t for t in all_tools if t['name'] in tool_names]
+                formatted = []
+                for t in filtered:
+                    formatted.append({
+                        "type": "function",
+                        "function": {
+                            "name": t["name"],
+                            "description": t["description"],
+                            "parameters": t["parameters"]
+                        }
+                    })
+                return formatted
+        except Exception as e:
+            print(f"Error fetching tools: {e}")
+            return []
+        return []
+
+    def call_tool(self, tool_name, arguments):
+        try:
+            # Inject VT key if available and relevant
+            if tool_name == "check_ip_reputation" and self.vt_api_key:
+                arguments["api_key"] = self.vt_api_key
+
+            response = requests.post(
+                f"{self.mcp_url}/execute",
+                json={"tool_name": tool_name, "arguments": arguments}
+            )
+            if response.status_code == 200:
+                return response.json()['result']
+            else:
+                return f"Error: {response.text}"
+        except Exception as e:
+            return f"Connection Error: {str(e)}"
+
+    def run_loop(self, system_prompt, user_input, tools, callback, max_turns=5):
+        if not self.client:
+            return "Error: API Key not configured."
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input}
+        ]
+        
+        final_content = ""
+        
+        for _ in range(max_turns):
+            try:
+                response = self.client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=messages,
+                    tools=tools if tools else None,
+                    stream=False
+                )
+                message = response.choices[0].message
+                messages.append(message)
+                
+                if message.content:
+                    self.log(f"{message.content}", callback)
+                    final_content += message.content + "\n"
+
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        func_name = tool_call.function.name
+                        func_args = json.loads(tool_call.function.arguments)
+                        self.log(f"调用工具 `{func_name}` 参数: {func_args}", callback)
+                        
+                        result = self.call_tool(func_name, func_args)
+                        self.log(f"工具返回: {result}", callback)
+                        
+                        # Special handling for approval
+                        if str(result).startswith("PENDING_APPROVAL"):
+                             # Avoid double prefixing if the tool already returned the prefix
+                             return result
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": str(result)
+                        })
+                else:
+                    return final_content
+            except Exception as e:
+                self.log(f"Error: {e}", callback)
+                return str(e)
+        return final_content
+
+class TriageAgent(BaseAgent):
+    def analyze(self, alert_data, callback):
+        self.log("正在分析告警可信度...", callback)
+        prompt = """你是一个 SOC 分诊员 (Triage Analyst)。
+你的任务是分析安全告警，判断它是误报 (False Positive) 还是值得调查的可疑事件。
+请分析 IP、Payload 和攻击类型。
+如果是误报，请说明理由。
+如果是可疑事件，请简要说明风险点。
+只输出分析结果，不要调用工具。"""
+        return self.run_loop(prompt, f"告警数据: {json.dumps(alert_data)}", [], callback, max_turns=1)
+
+class ForensicAgent(BaseAgent):
+    def investigate(self, alert_data, triage_notes, callback):
+        self.log("正在进行取证调查...", callback)
+        tools = self.get_tools(["check_ip_reputation", "analyze_payload", "graph_add_entity", "graph_add_relation", "graph_query"])
+        
+        prompt = """你是一个 SOC 取证专家 (Forensic Investigator)。
+你的任务是深入调查可疑告警。
+1. 使用 `check_ip_reputation` 检查 IP。
+2. 使用 `analyze_payload` 分析攻击载荷。
+3. **构建高连通性图谱（核心任务）：**
+   - **优先使用 `graph_add_relation`**：不要单独调用 `graph_add_entity`，除非该实体完全孤立。`graph_add_relation` 会自动创建节点。
+   - **必填关系**：
+     - 攻击源 -> 攻击目标：使用 `analyze_payload` 的结果作为关系名称（例如：`IP:1.2.3.4` --[SQL Injection]--> `Host:Web-Server`）。
+     - 归属关系：`User` --[owns]--> `Host`。
+     - 交互关系：`Process` --[spawns]--> `Process`。
+   - **拒绝孤立节点**：确保图谱中没有孤立的点，所有实体都必须通过边连接。
+4. 总结你的发现。
+请使用中文。"""
+        return self.run_loop(prompt, f"告警数据: {json.dumps(alert_data)}\n分诊意见: {triage_notes}", tools, callback, max_turns=8)
+
+class CommanderAgent(BaseAgent):
+    def decide(self, alert_data, forensic_report, callback):
+        self.log("正在制定响应决策...", callback)
+        tools = self.get_tools(["firewall_block_ip", "ask_human_approval"])
+        
+        prompt = """你是一个 SOC 指挥官 (Commander)。
+根据取证报告，决定是否采取行动。
+如果确认威胁，请使用 `firewall_block_ip` 封禁 IP，或使用 `ask_human_approval` 请求批准。
+最后输出最终报告。
+请使用中文。"""
+        return self.run_loop(prompt, f"告警数据: {json.dumps(alert_data)}\n取证报告: {forensic_report}", tools, callback, max_turns=5)
+
+class ReporterAgent(BaseAgent):
+    def report(self, case_context, callback):
+        self.log("正在生成最终案件调查报告...", callback)
+        
+        prompt = """你是一个 SOC 报告员 (Reporter)。
+你的任务是根据整个案件的调查过程（可能包含多个关联告警），撰写一份结构化的《安全事件调查报告》。
+报告应包含以下部分：
+1. **案件摘要**：简要描述整个攻击链（如：钓鱼 -> C2 -> 横向移动 -> 数据外泄）。
+2. **攻击时间线**：按时间顺序列出关键事件。
+3. **调查发现**：列出关键证据（IP、Payload、关联实体、受影响资产）。
+4. **处置结果**：采取了什么行动（如封禁、隔离）。
+5. **改进建议**：针对此类 APT 攻击的防御建议。
+
+请使用 Markdown 格式，语言专业、简洁。"""
+        
+        context = f"案件调查记录:\n{json.dumps(case_context, indent=2, ensure_ascii=False)}"
+        return self.run_loop(prompt, context, [], callback, max_turns=1)
+
+class ScenarioGenerator(BaseAgent):
+    def generate_scenario(self, input_text):
+        if not self.client:
+             return []
+             
+        prompt = """
+        你是一个网络安全红队专家。
+        请根据用户的描述或提供的安全报告，生成一个模拟攻击链的告警列表。
+        
+        输出必须是合法的 JSON 格式，是一个包含多个告警对象的列表。
+        每个告警对象必须包含以下字段：
+        - type: 攻击类型 (String)
+        - source_ip: 源 IP (String)
+        - target: 目标资产 (String, 可以是 IP 或主机名)
+        - timestamp: 时间戳 (String, 格式 YYYY-MM-DD HH:MM:SS)
+        - details: 详细信息 (String, 必须包含真实的 Payload、命令行参数、文件路径或 CVE 编号)
+        
+        **关键要求：**
+        1. **真实性**：告警内容必须看起来像真实的 SIEM 或 EDR 告警。例如，不要只写 "SQL 注入"，而要写 "Detected SQL Injection attempt: ' OR 1=1 --"；不要只写 "恶意软件"，要写 "Process 'powershell.exe' executed base64 encoded command..."。
+        2. **连贯性 (重要)**：为了生成完美的知识图谱，**必须在不同告警之间复用相同的实体**（IP、主机名、用户名）。
+           - 例如：如果告警 1 是 IP A 攻击 IP B，那么告警 2 应该是 IP B 连接 C2，或者 IP B 攻击 IP C。
+           - 确保攻击链环环相扣，实体之间有明确的关联。
+        3. **完整性**：攻击链应包含 3-5 个步骤，覆盖 侦查 -> 初始访问 -> 执行 -> 持久化/横向移动 -> 影响 等阶段。
+        
+        只输出 JSON，不要包含 Markdown 格式标记或其他文本。
+        """
+
+        try:
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": input_text}
+                ],
+                stream=False
+            )
+            
+            content = response.choices[0].message.content
+            # Clean up markdown code blocks if present
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+                
+            return json.loads(content.strip())
+        except Exception as e:
+            print(f"Scenario Generation Error: {e}")
+            return []
+
+class Agent:
+    """Orchestrator Agent that manages the multi-agent workflow."""
+    def __init__(self, deepseek_api_key=None, virustotal_api_key=None):
+        self.triage = TriageAgent("Triage", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
+        self.forensic = ForensicAgent("Forensics", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
+        self.commander = CommanderAgent("Commander", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
+        self.reporter = ReporterAgent("Reporter", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
+        self.history = []
+        self.case_context = []
+
+    def think(self, alert_data, stream_callback=None, skip_report=False):
+        self.history = []
+        
+        def cb(msg):
+            self.history.append(msg)
+            if stream_callback: stream_callback(msg)
+
+        cb(f"[System] 启动多 Agent 协同工作流...")
+
+        # 1. Triage Phase
+        triage_result = self.triage.analyze(alert_data, cb)
+        if "误报" in triage_result or "False Positive" in triage_result:
+            cb("[System] 告警被判定为误报，流程结束。")
+            return "Closed (False Positive)", self.history, None
+
+        # 2. Forensic Phase
+        forensic_report = self.forensic.investigate(alert_data, triage_result, cb)
+
+        # 3. Commander Phase
+        final_decision = self.commander.decide(alert_data, forensic_report, cb)
+        
+        # Store context for the case (Store BEFORE returning for approval)
+        self.case_context.append({
+            "alert": alert_data,
+            "triage": triage_result,
+            "forensic": forensic_report,
+            "decision": final_decision
+        })
+
+        approval_request = None
+        if "PENDING_APPROVAL" in final_decision:
+             cb("[System] ⚠️ 收到人工审批请求。已加入待办队列，Agent 继续执行...")
+             approval_request = final_decision
+
+        # 4. Reporting Phase (Optional)
+        final_report = None
+        if not skip_report:
+            final_report = self.reporter.report(self.case_context, cb)
+        
+        status = "Incident Closed"
+        if approval_request:
+            status = f"PENDING_APPROVAL_ASYNC: {approval_request}"
+            
+        return status, self.history, final_report
+
+    def generate_case_report(self, stream_callback=None):
+        """Generates a report for the accumulated case context."""
+        def cb(msg):
+            if stream_callback: stream_callback(msg)
+            
+        return self.reporter.report(self.case_context, cb)
