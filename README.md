@@ -50,9 +50,9 @@
 
 ```mermaid
 graph TD
-    User[安全分析师] -->|交互/审批| UI[Streamlit 仪表盘]
-    UI -->|HTTP 请求| MCP[MCP Server (FastAPI)]
-    UI -->|状态监控| AgentCore[AI Agent Core]
+    User[安全分析师] -->|交互/审批| UI["Streamlit 仪表盘"]
+    UI -->|HTTP 请求| MCP["MCP Server (FastAPI)"]
+    UI -->|状态监控| AgentCore["AI Agent Core"]
     
     subgraph AgentTeam ["AI Agent Team (Brain)"]
         AgentCore --> Triage[分诊 Agent]
@@ -62,10 +62,10 @@ graph TD
     end
     
     subgraph MCPTools ["MCP Tools (Hands and Eyes)"]
-        MCP --> VT[VirusTotal API]
+        MCP --> VT["VirusTotal API"]
         MCP --> Graph[知识图谱引擎]
         MCP --> Firewall[防火墙模拟]
-        MCP --> Payload[Payload 分析器]
+        MCP --> Payload["Payload 分析器"]
     end
     
     Forensic -->|调用工具| MCP
