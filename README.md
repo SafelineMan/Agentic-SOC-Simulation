@@ -12,6 +12,9 @@
 
 ![Agentic SOC Dashboard](assets/demo.png)
 
+<video src="assets/demo_video.mov" controls="controls" width="100%">
+</video>
+
 ## ✨ 核心亮点 (Key Highlights)
 
 *   **🧠 深度认知智能体 (Cognitive AI Analyst)**
