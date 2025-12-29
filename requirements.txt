@@ -8,3 +8,4 @@ openai
 httpx
 pyvis
 networkx
+markdown
