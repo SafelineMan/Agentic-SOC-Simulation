@@ -6,6 +6,8 @@ requests
 python-dotenv
 openai
 httpx
-pyvis
 networkx
 markdown
+matplotlib
+streamlit-agraph
+watchdog
