@@ -12,6 +12,8 @@
 
 ![Agentic SOC Dashboard](assets/demo.png)
 
+📺 **YouTube 演示视频**: https://youtu.be/_gRINAQaKmo
+
 [![Watch the video](https://img.youtube.com/vi/_gRINAQaKmo/0.jpg)](https://youtu.be/_gRINAQaKmo)
 
 ## ✨ 核心亮点 (Key Highlights)
