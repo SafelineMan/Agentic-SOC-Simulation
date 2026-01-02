@@ -103,10 +103,10 @@ graph TD
     - 提供标准 API 供 Agent 调用。
     - 包含真实/模拟的安全工具逻辑。
 
-3.  **AI Agent (Python)**: `agent/core.py`
-    - 运营的“大脑”。
-    - 负责与 LLM 交互，解析意图，并执行工具调用循环。
-    - 包含 `ScenarioGenerator` 用于生成自定义攻击剧本。
+3.  **AI Agent (Python)**: `agent/`
+    - **`core.py`**: 运营的“大脑”。定义了基础 `Agent` 类以及七大专业角色（紫队、检测、引擎、分诊、取证、指挥官、报告）。
+    - **`engine.py`**: 分析引擎，负责将 OCSF 遥测数据与检测规则进行匹配。
+    - **`ocsf.py`**: 定义 OCSF (Open Cybersecurity Schema Framework) 数据模型。
 
 ## ⚙️ 执行流程示例 (平行仿真场景)
 

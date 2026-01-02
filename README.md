@@ -105,10 +105,10 @@ graph TD
     - Provides standard APIs for Agent calls.
     - Contains logic for real/simulated security tools.
 
-3.  **AI Agent (Python)**: `agent/core.py`
-    - The "brain" of operations.
-    - Responsible for interacting with the LLM, parsing intent, and executing the tool call loop.
-    - Includes `ScenarioGenerator` for generating custom attack scenarios.
+3.  **AI Agent (Python)**: `agent/`
+    - **`core.py`**: The "brain" of operations. Defines the base `Agent` class and the 7 specialized roles (Purple, Detection, Engine, Triage, Forensics, Commander, Reporter).
+    - **`engine.py`**: The Analysis Engine responsible for matching OCSF telemetry against detection rules.
+    - **`ocsf.py`**: Defines the OCSF (Open Cybersecurity Schema Framework) data models.
 
 ## ⚙️ Execution Flow Example (Parallel Simulation)
 
