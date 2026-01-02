@@ -16,8 +16,9 @@
 ### 📸 Dashboard V1.0 (Legacy)
 ![Agentic SOC Dashboard V1.0](assets/demo_v1.png)
 
-📺 **YouTube 演示视频 (V2.0)**: https://www.youtube.com/watch?v=XFazCM4x4b4
-📺 **YouTube 演示视频 (V1.0)**: https://www.youtube.com/watch?v=_gRINAQaKmo
+### 📺 YouTube 演示视频 (V2.0): https://www.youtube.com/watch?v=XFazCM4x4b4
+
+### 📺 YouTube 演示视频 (V1.0): https://www.youtube.com/watch?v=_gRINAQaKmo
 
 ## ✨ 核心亮点 (Key Highlights)
 

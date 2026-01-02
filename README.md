@@ -18,8 +18,9 @@ Here, AI is no longer a simple script executor but a digital analyst with **expe
 ### 📸 Dashboard V1.0 (Legacy)
 ![Agentic SOC Dashboard V1.0](assets/demo_v1.png)
 
-📺 **YouTube Demo (V2.0)**: https://www.youtube.com/watch?v=XFazCM4x4b4
-📺 **YouTube Demo (V1.0)**: https://www.youtube.com/watch?v=_gRINAQaKmo
+### 📺 YouTube Demo (V2.0): https://www.youtube.com/watch?v=XFazCM4x4b4
+
+### 📺 YouTube Demo (V1.0): https://www.youtube.com/watch?v=_gRINAQaKmo
 
 ## ✨ Key Highlights
 
