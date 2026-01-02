@@ -175,7 +175,7 @@ python3 -m streamlit run app/main.py
 ├── mcp_server/         # Tool Service (FastAPI)
 │   └── main.py         # Provides APIs for IP Reputation, Firewall, Graph Management, etc.
 ├── agent/              # Agent Core Logic
-│   ├── core.py         # Defines Agent Class and ScenarioGenerator Class
+│   ├── core.py         # Defines BaseAgent and specialized Agent roles
 │   ├── engine.py       # Analysis Engine: Responsible for rule matching and alert triggering
 │   └── ocsf.py         # Data Standard: OCSF Telemetry Data Model Definition
 ├── requirements.txt    # Project Dependencies

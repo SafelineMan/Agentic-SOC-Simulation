@@ -173,7 +173,7 @@ python3 -m streamlit run app/main.py
 ├── mcp_server/         # 工具服务 (FastAPI)
 │   └── main.py         # 提供 IP 信誉查询、防火墙、图谱管理等 API
 ├── agent/              # Agent 核心逻辑
-│   ├── core.py         # 定义 Agent 类和 ScenarioGenerator 类
+│   ├── core.py         # 定义 BaseAgent 类及七大专业角色
 │   ├── engine.py       # 分析引擎：负责规则匹配与告警触发
 │   └── ocsf.py         # 数据标准：OCSF 遥测数据模型定义
 ├── requirements.txt    # 项目依赖
