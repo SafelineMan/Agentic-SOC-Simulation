@@ -3,6 +3,8 @@ import json
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
+from .ocsf import OCSFEvent
+from .engine import DetectionEngine, DetectionRule
 
 # Load environment variables
 load_dotenv()
@@ -160,7 +162,15 @@ class CommanderAgent(BaseAgent):
         
         prompt = """你是一个 SOC 指挥官 (Commander)。
 根据取证报告，决定是否采取行动。
-如果确认威胁，请使用 `firewall_block_ip` 封禁 IP，或使用 `ask_human_approval` 请求批准。
+
+**决策逻辑：**
+1. 如果威胁非常明确且紧急（如 C2 通信、横向移动），请优先使用 `firewall_block_ip` 进行自动遏制。
+2. **强制人工审批场景**：
+   - 如果涉及关键资产（如数据库、域控）。
+   - 如果需要进行高风险操作（如隔离主机、重置全域密码）。
+   - 如果你不确定是否应该封禁。
+   - **为了演示目的，请尽量在处理高危告警时触发一次 `ask_human_approval`。**
+
 最后输出最终报告。
 请使用中文。"""
         return self.run_loop(prompt, f"告警数据: {json.dumps(alert_data)}\n取证报告: {forensic_report}", tools, callback, max_turns=5)
@@ -183,54 +193,132 @@ class ReporterAgent(BaseAgent):
         context = f"案件调查记录:\n{json.dumps(case_context, indent=2, ensure_ascii=False)}"
         return self.run_loop(prompt, context, [], callback, max_turns=1)
 
-class ScenarioGenerator(BaseAgent):
-    def generate_scenario(self, input_text):
+class PurpleTeamAgent(BaseAgent):
+    def generate_telemetry(self, scenario_description, callback):
+        self.log("正在生成 OCSF 遥测数据 (包含正常背景噪声)...", callback)
+        
+        prompt = """你是一个紫队工程师 (Purple Team Engineer)。
+你的任务是根据攻击剧本，生成符合 OCSF (Open Cybersecurity Schema Framework) 标准的原始遥测日志。
+
+**要求：**
+1. **混合数据**：生成 15-20 条日志。其中 3-5 条是剧本描述的恶意攻击行为，其余必须是该用户的**正常日常行为**（如浏览网页、后台服务、文件操作），以模拟真实的噪音环境。
+2. **时间连续性**：日志的时间戳必须是连续的，攻击行为要混杂在正常行为中间。
+3. **格式严格**：必须返回一个 JSON 列表，每个元素是一个 OCSF Event 对象。
+
+**OCSF 关键字段参考：**
+- class_uid: 1007 (Process Activity), 4001 (Network Activity), 1001 (File Activity)
+- activity_id: 1 (Create/Connect), 2 (Read/Listen)
+- src_endpoint: {ip, hostname}
+- process: {name, cmd_line, user} (Ensure cmd_line is populated for suspicious processes)
+
+**输出格式：**
+只输出 JSON 列表，不要包含 Markdown 标记。
+"""
         if not self.client:
-             return []
-             
-        prompt = """
-        你是一个网络安全红队专家。
-        请根据用户的描述或提供的安全报告，生成一个模拟攻击链的告警列表。
-        
-        输出必须是合法的 JSON 格式，是一个包含多个告警对象的列表。
-        每个告警对象必须包含以下字段：
-        - type: 攻击类型 (String)
-        - source_ip: 源 IP (String)
-        - target: 目标资产 (String, 可以是 IP 或主机名)
-        - timestamp: 时间戳 (String, 格式 YYYY-MM-DD HH:MM:SS)
-        - details: 详细信息 (String, 必须包含真实的 Payload、命令行参数、文件路径或 CVE 编号)
-        
-        **关键要求：**
-        1. **真实性**：告警内容必须看起来像真实的 SIEM 或 EDR 告警。例如，不要只写 "SQL 注入"，而要写 "Detected SQL Injection attempt: ' OR 1=1 --"；不要只写 "恶意软件"，要写 "Process 'powershell.exe' executed base64 encoded command..."。
-        2. **连贯性 (重要)**：为了生成完美的知识图谱，**必须在不同告警之间复用相同的实体**（IP、主机名、用户名）。
-           - 例如：如果告警 1 是 IP A 攻击 IP B，那么告警 2 应该是 IP B 连接 C2，或者 IP B 攻击 IP C。
-           - 确保攻击链环环相扣，实体之间有明确的关联。
-        3. **完整性**：攻击链应包含 3-5 个步骤，覆盖 侦查 -> 初始访问 -> 执行 -> 持久化/横向移动 -> 影响 等阶段。
-        
-        只输出 JSON，不要包含 Markdown 格式标记或其他文本。
-        """
+            return []
 
         try:
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
                     {"role": "system", "content": prompt},
-                    {"role": "user", "content": input_text}
+                    {"role": "user", "content": f"攻击剧本: {scenario_description}"}
                 ],
                 stream=False
             )
-            
             content = response.choices[0].message.content
-            # Clean up markdown code blocks if present
+            # Clean up markdown
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+            
+            data = json.loads(content.strip())
+            events = []
+            for item in data:
+                try:
+                    events.append(OCSFEvent(**item))
+                except Exception as e:
+                    self.log(f"[Warning] Skipping invalid event: {e} | Data: {json.dumps(item)}", callback)
+            
+            if not events:
+                self.log(f"[Error] No valid events generated. Raw content: {content[:500]}...", callback)
+
+            self.log(f"已生成 {len(events)} 条遥测日志。", callback)
+            return events
+        except Exception as e:
+            self.log(f"生成遥测失败: {e}", callback)
+            return []
+
+class DetectionEngineerAgent(BaseAgent):
+    def develop_rules(self, telemetry_sample, scenario_description, callback):
+        self.log("正在分析遥测数据并开发检测规则...", callback)
+        
+        prompt = """你是一个检测工程师 (Detection Engineer)。
+你的任务是分析提供的 OCSF 遥测数据，找出其中的恶意行为，并编写检测规则。
+
+**输入：**
+1. 攻击剧本描述。
+2. 一批 OCSF 格式的原始日志（包含噪音）。
+
+**任务：**
+1. 识别出符合剧本的恶意日志。
+2. 编写 1-3 条检测规则来捕获这些行为。
+3. 规则格式必须是 JSON，包含简单的匹配逻辑。
+
+**规则逻辑格式 (Python Dict 风格):**
+{
+    "class_uid": 1007, 
+    "conditions": {
+        "process.name": "cmd.exe",
+        "process.cmd_line__contains": "/c powershell"
+    }
+}
+支持的操作符后缀: __contains, __endswith, __startswith。无后缀则为精确匹配。
+
+**输出格式：**
+返回一个 JSON 列表，包含多个规则对象。
+每个规则对象包含: id, title, description, severity, logic。
+只输出 JSON。
+"""
+        if not self.client:
+            return []
+
+        # Convert telemetry to simplified JSON for LLM to save tokens
+        # Use model_dump instead of dict for Pydantic v2 compatibility if needed, but dict() works for v1
+        try:
+            telemetry_json = json.dumps([e.dict(exclude_none=True) for e in telemetry_sample], indent=2)
+        except:
+             # Fallback for Pydantic v2
+             telemetry_json = json.dumps([e.model_dump(exclude_none=True) for e in telemetry_sample], indent=2)
+
+        try:
+            response = self.client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": f"剧本: {scenario_description}\n\n遥测数据样本:\n{telemetry_json}"}
+                ],
+                stream=False
+            )
+            content = response.choices[0].message.content
             if "```json" in content:
                 content = content.split("```json")[1].split("```")[0]
             elif "```" in content:
                 content = content.split("```")[1].split("```")[0]
                 
-            return json.loads(content.strip())
+            data = json.loads(content.strip())
+            rules = []
+            for item in data:
+                rules.append(DetectionRule(**item))
+            
+            self.log(f"已开发 {len(rules)} 条检测规则。", callback)
+            return rules
         except Exception as e:
-            print(f"Scenario Generation Error: {e}")
+            self.log(f"开发规则失败: {e}", callback)
             return []
+
+
 
 class Agent:
     """Orchestrator Agent that manages the multi-agent workflow."""
@@ -239,8 +327,97 @@ class Agent:
         self.forensic = ForensicAgent("Forensics", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
         self.commander = CommanderAgent("Commander", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
         self.reporter = ReporterAgent("Reporter", api_key=deepseek_api_key, vt_api_key=virustotal_api_key)
+        
+        # New Agents
+        self.purple = PurpleTeamAgent("PurpleTeam", api_key=deepseek_api_key)
+        self.detection_eng = DetectionEngineerAgent("DetectionEng", api_key=deepseek_api_key)
+        self.engine = DetectionEngine()
+        
         self.history = []
         self.case_context = []
+
+    def run_purple_step1_gen_data(self, scenario_text, stream_callback=None):
+        """Step 1: Generate Telemetry"""
+        self.history = []
+        def cb(msg):
+            self.history.append(msg)
+            if stream_callback: stream_callback(msg)
+            
+        cb(f"[System] 启动紫队演练 Step 1: 生成遥测数据...")
+        cb(f"[PurpleTeam] 正在解析攻击剧本: {scenario_text[:50]}...")
+        cb(f"[PurpleTeam] 正在构建 OCSF 遥测数据模型 (混合正常流量与攻击流量)...")
+        telemetry = self.purple.generate_telemetry(scenario_text, cb)
+        cb(f"[PurpleTeam] 数据生成完毕，准备入库。")
+        return telemetry
+
+    def run_purple_step2_dev_rules(self, telemetry, scenario_text, stream_callback=None):
+        """Step 2: Develop Rules"""
+        self.history = []
+        def cb(msg):
+            self.history.append(msg)
+            if stream_callback: stream_callback(msg)
+            
+        cb(f"[System] 启动紫队演练 Step 2: 开发检测规则...")
+        cb(f"[DetectionEng] 正在从数仓读取 {len(telemetry)} 条遥测日志...")
+        cb(f"[DetectionEng] 正在分析攻击特征并编写 Sigma/JSON 规则...")
+        rules = self.detection_eng.develop_rules(telemetry, scenario_text, cb)
+        cb(f"[DetectionEng] 规则开发完毕，准备部署。")
+        return rules
+
+    def run_purple_step3_engine_scan(self, rules, telemetry, stream_callback=None):
+        """Step 3: Engine Scan"""
+        self.history = []
+        def cb(msg):
+            self.history.append(msg)
+            if stream_callback: stream_callback(msg)
+            
+        cb(f"[System] 启动紫队演练 Step 3: 规则引擎扫描...")
+        cb(f"[Engine] 正在初始化检测引擎，加载 {len(rules)} 条新规则...")
+        cb(f"[Engine] 开始回放 {len(telemetry)} 条历史遥测数据...")
+        self.engine.load_rules(rules)
+        alerts = self.engine.evaluate(telemetry)
+        cb(f"[Engine] 扫描完成，产生 {len(alerts)} 条高危告警。")
+        return alerts
+
+    def run_purple_prep(self, scenario_text, stream_callback=None):
+        """
+        Runs the Purple Team & Detection Engineering phase.
+        Returns a list of alerts to be processed by the SOC.
+        """
+        self.history = []
+        def cb(msg):
+            self.history.append(msg)
+            if stream_callback: stream_callback(msg)
+
+        cb(f"[System] 启动紫队演练闭环 (Purple Team Loop)...")
+        
+        # 1. Purple Team: Generate Telemetry
+        telemetry = self.purple.generate_telemetry(scenario_text, cb)
+        if not telemetry:
+            cb("[System] 遥测生成失败，流程终止。")
+            return [], []
+
+        # 2. Detection Engineer: Develop Rules
+        rules = self.detection_eng.develop_rules(telemetry, scenario_text, cb)
+        if not rules:
+            cb("[System] 规则开发失败，流程终止。")
+            return [], []
+            
+        # 3. Engine: Load Rules & Detect
+        cb(f"[Engine] 加载 {len(rules)} 条检测规则并回放遥测数据...")
+        self.engine.load_rules(rules)
+        alerts = self.engine.evaluate(telemetry)
+        cb(f"[Engine] 产生 {len(alerts)} 条告警。")
+        
+        if not alerts:
+            cb("[System] 未触发任何告警，演练结束 (漏报)。")
+            return [], telemetry
+
+        return alerts, telemetry
+
+    def run_purple_loop(self, scenario_text, stream_callback=None):
+        # Deprecated in favor of run_purple_prep + standard loop
+        pass
 
     def think(self, alert_data, stream_callback=None, skip_report=False):
         self.history = []

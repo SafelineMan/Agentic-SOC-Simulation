@@ -11,3 +11,4 @@ markdown
 matplotlib
 streamlit-agraph
 watchdog
+pandas

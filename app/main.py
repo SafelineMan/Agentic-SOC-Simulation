@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import time
+import pandas as pd
 from datetime import datetime, timedelta
 import sys
 import os
@@ -11,15 +12,24 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import textwrap
 from streamlit_agraph import agraph, Node, Edge, Config
+import importlib
 
 # Add the root directory to sys.path to allow importing agent modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from agent.core import Agent, ScenarioGenerator
+import agent.core
+import agent.ocsf
+import agent.engine
 
-st.set_page_config(page_title="ASS - 下一代自主安全运营仿真中心", layout="wide")
+importlib.reload(agent.ocsf)
+importlib.reload(agent.engine)
+importlib.reload(agent.core)
 
-st.title("🛡️ Agentic SOC Simulation (ASS): 下一代自主安全运营仿真中心")
+from agent.core import Agent
+
+st.set_page_config(page_title="ASPS - 自主安全运营平行仿真中心", layout="wide")
+
+st.title("🛡️ Agentic SOC Parallel Simulation (ASPS): 自主安全运营平行仿真中心")
 
 # Initialize session state
 if 'agent_history' not in st.session_state:
@@ -118,46 +128,24 @@ with st.sidebar:
                 virustotal_api_key=vt_key_input
             )
 
-    st.markdown("---")
-    st.header("🕵️‍♂️ APT 模拟")
-    
-    with st.expander("📖 查看剧本详情 (Lazarus APT)"):
-        st.caption("点击下方按钮将依次注入以下告警：")
-        for i, alert in enumerate(apt_alerts):
-            st.markdown(f"**{i+1}. {alert['type']}**")
-            st.text(f"源: {alert['source_ip']} -> 目的: {alert['target']}")
-            st.code(json.dumps(alert, indent=2, ensure_ascii=False), language="json")
 
-    apt_btn = st.button("▶️ 模拟 Lazarus APT 攻击链", type="primary")
     
     st.markdown("---")
-    st.header("🛠️ 自定义模拟")
-    custom_input = st.text_area("输入攻击思路或粘贴安全报告", height=150, placeholder="例如：模拟一个通过 Log4j 漏洞入侵 Web 服务器并挖矿的攻击链...")
-    generate_btn = st.button("🎲 生成自定义剧本")
+    st.header("♾️ 平行仿真演练 (Parallel Simulation)")
+    st.caption("从剧本生成遥测数据，自动开发规则，并验证检测效果。")
+    
+    default_scenario = """模拟 Lazarus 组织的一次攻击。
 
-    if generate_btn and custom_input:
-        with st.spinner("正在生成剧本..."):
-            try:
-                generator = ScenarioGenerator("Generator",
-                    api_key=st.session_state.get('deepseek_api_key'),
-                    vt_api_key=st.session_state.get('virustotal_api_key')
-                )
-                custom_scenario = generator.generate_scenario(custom_input)
-                if custom_scenario:
-                    st.session_state['custom_scenario'] = custom_scenario
-                    st.success("剧本生成成功！")
-                else:
-                    st.error("生成失败，请重试")
-            except Exception as e:
-                st.error(f"生成失败: {e}")
+1. 攻击者 (IP: 45.33.22.11) 向受害者 (User-Workstation-01) 发送钓鱼邮件，附件是 invoice.exe。
+2. 用户运行附件，invoice.exe 启动并连接 C2 服务器 (185.100.200.5)。
+3. 攻击者进行横向移动，尝试通过 SMB 爆破 DB-Server-01。
+4. 攻击者在 DB-Server-01 上建立持久化（创建计划任务 UpdaterService）。
+5. 攻击者将敏感数据打包，并从 DB-Server-01 外泄到 C2 服务器 (185.100.200.5)。"""
 
-    if st.session_state.get('custom_scenario'):
-        with st.expander("📖 查看自定义剧本", expanded=True):
-            st.json(st.session_state['custom_scenario'])
-        
-        custom_run_btn = st.button("▶️ 运行自定义剧本", type="primary")
-    else:
-        custom_run_btn = False
+    purple_scenario = st.text_area("输入演练剧本", value=default_scenario, height=180, key="purple_input")
+    purple_btn = st.button("🚀 启动全流程演练", type="primary")
+
+
 
     st.markdown("---")
     st.header("⚙️ 图谱设置")
@@ -178,27 +166,40 @@ st.subheader("👥 安全运营团队 (SOC Team)")
 agents_placeholder = st.empty()
 st.markdown("---")
 
-col1, col2, col3 = st.columns([1, 1, 1])
+# Row 1
+row1_col1, row1_col2, row1_col3 = st.columns([1, 1, 1])
 
-# Placeholders for dynamic updates
-with col1:
-    st.subheader("📋 实时告警队列")
-    alert_queue_container = st.container(height=300)
-    
+with row1_col1:
+    st.subheader("🛠️ 检测工程工作台 (Detection Engineering Workspace)")
+    detection_workspace_placeholder = st.empty()
+
+with row1_col2:
+    st.subheader("📋 实时告警队列 (Real-time Alert Queue)")
+    alert_queue_container = st.container(height=400)
+
+with row1_col3:
+    st.subheader("🧠 Agent 思维链 (Chain of Thought)")
+    log_placeholder = st.empty()
+
+st.markdown("---")
+
+# Row 2
+row2_col1, row2_col2, row2_col3 = st.columns([1, 1, 1])
+
+with row2_col1:
     st.subheader("🕸️ 知识图谱 (Knowledge Graph)")
     graph_placeholder = st.empty()
 
-with col2:
-    st.subheader("🧠 Agent 思维链 (Chain of Thought)")
-    log_placeholder = st.empty()
-    
+with row2_col2:
     st.subheader("📄 调查报告 (Investigation Report)")
-    report_placeholder = st.empty()
+    report_container = st.container(height=400)
+    with report_container:
+        report_placeholder = st.empty()
 
-with col3:
+with row2_col3:
     st.subheader("👮‍♂️ 人工决策 (Human-in-the-Loop)")
     approval_placeholder = st.empty()
-    st.subheader("📜 决策历史")
+    st.subheader("📜 决策历史 (Decision History)")
     decision_history_container = st.container(height=200)
 
 def fetch_graph_data():
@@ -297,45 +298,159 @@ def render_active_agents(logs):
             active_agent = "Commander"
         elif "[Reporter]" in last_log:
             active_agent = "Reporter"
+        elif "[PurpleTeam]" in last_log:
+            active_agent = "PurpleTeam"
+        elif "[DetectionEng]" in last_log:
+            active_agent = "DetectionEng"
+        elif "[Engine]" in last_log:
+            active_agent = "Engine"
     
-    agents = [
-        {"id": "Triage", "name": "分诊工程师", "role": "Triage Analyst", "icon": "🔍"},
-        {"id": "Forensics", "name": "取证工程师", "role": "Forensic Investigator", "icon": "🕵️‍♂️"},
-        {"id": "Commander", "name": "响应工程师", "role": "Incident Commander", "icon": "🛡️"},
-        {"id": "Reporter", "name": "报告工程师", "role": "Reporter", "icon": "📝"}
+    # Define Agents Map with Steps
+    agents_map = {
+        "PurpleTeam": {"name": "紫队工程师", "role": "Purple Team", "icon": "😈", "step": 0},
+        "Warehouse": {"name": "安全数仓", "role": "Data Warehouse", "icon": "🗄️", "step": 1},
+        "DetectionEng": {"name": "检测工程师", "role": "Detection Eng", "icon": "🛠️", "step": 2},
+        "Engine": {"name": "分析引擎", "role": "Analysis Engine", "icon": "⚙️", "step": 3},
+        "Triage": {"name": "分诊工程师", "role": "Triage Analyst", "icon": "🔍", "step": 4},
+        "Forensics": {"name": "取证工程师", "role": "Forensic Investigator", "icon": "🕵️‍♂️", "step": 5},
+        "Commander": {"name": "响应工程师", "role": "Incident Commander", "icon": "🛡️", "step": 5},
+        "Reporter": {"name": "报告工程师", "role": "Reporter", "icon": "📝", "step": 6}
+    }
+    
+    # Find active index
+    active_idx = -1
+    if active_agent and active_agent in agents_map:
+        active_idx = agents_map[active_agent]['step']
+    
+    def render_card(agent_key):
+        if agent_key not in agents_map: return ""
+        agent = agents_map[agent_key]
+        step = agent['step']
+        
+        # Status Logic
+        if active_idx == -1:
+            status = "pending"
+        elif step < active_idx:
+            status = "completed"
+        elif step == active_idx:
+            status = "active"
+        else:
+            status = "pending"
+            
+        # Styles
+        if status == "active":
+            bg = "#e6f3ff"; border = "#2196F3"; opacity = "1.0"; text = "工作中"; color = "#2196F3"; shadow = "0 6px 12px rgba(33,150,243,0.4)"; transform = "scale(1.05)"
+        elif status == "completed":
+            bg = "#f0f9f0"; border = "#4CAF50"; opacity = "0.9"; text = "已完成"; color = "#4CAF50"; shadow = "none"; transform = "scale(1.0)"
+        else:
+            bg = "#f8f9fa"; border = "#e0e0e0"; opacity = "0.6"; text = "待命"; color = "#999"; shadow = "none"; transform = "scale(1.0)"
+            
+        return (
+            f'<div style="min-width: 160px; background-color: {bg}; border: 2px solid {border}; border-radius: 12px; padding: 15px; '
+            f'text-align: center; opacity: {opacity}; box-shadow: {shadow}; transform: {transform}; transition: all 0.3s; z-index: 10;">'
+            f'<div style="font-size: 32px; margin-bottom: 8px;">{agent["icon"]}</div>'
+            f'<div style="font-weight: bold; font-size: 16px; color: #333; margin-bottom: 4px;">{agent["name"]}</div>'
+            f'<div style="font-size: 12px; color: {color}; font-weight: bold; background-color: rgba(255,255,255,0.6); padding: 4px 8px; border-radius: 10px; display: inline-block;">{text}</div>'
+            f'</div>'
+        )
+
+    def render_svg_arrow(type, from_step):
+        is_active = (active_idx > from_step)
+        color = "#2196F3" if is_active else "#ddd"
+        
+        width = 120
+        height = 80
+        stroke_width = 3
+        
+        if type == "straight":
+            return (
+                f'<div style="display: flex; align-items: center; height: 100%;">'
+                f'<svg width="{width}" height="20" viewBox="0 0 {width} 20" fill="none" xmlns="http://www.w3.org/2000/svg">'
+                f'<path d="M0 10 H{width-10}" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round"/>'
+                f'<path d="M{width-10} 10 L{width-20} 5 M{width-10} 10 L{width-20} 15" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                f'</svg></div>'
+            )
+        elif type == "arrow_down":
+            return (
+                f'<div style="display: flex; justify-content: center; height: 40px; width: 100%;">'
+                f'<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">'
+                f'<path d="M20 0 V30" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round"/>'
+                f'<path d="M20 30 L15 20 M20 30 L25 20" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                f'</svg></div>'
+            )
+        elif type == "curve_down": # Start Top-Left, End Bottom-Right
+            return (
+                f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none" xmlns="http://www.w3.org/2000/svg">'
+                f'<path d="M0 10 C{width/2} 10 {width/2} {height-10} {width-10} {height-10}" stroke="{color}" stroke-width="{stroke_width}" fill="none"/>'
+                f'<path d="M{width-10} {height-10} L{width-20} {height-15} M{width-10} {height-10} L{width-20} {height-5}" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                f'</svg>'
+            )
+        elif type == "curve_up": # Start Bottom-Left, End Top-Right
+            return (
+                f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" fill="none" xmlns="http://www.w3.org/2000/svg">'
+                f'<path d="M0 {height-10} C{width/2} {height-10} {width/2} 10 {width-10} 10" stroke="{color}" stroke-width="{stroke_width}" fill="none"/>'
+                f'<path d="M{width-10} 10 L{width-20} 5 M{width-10} 10 L{width-20} 15" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round"/>'
+                f'</svg>'
+            )
+        return ""
+
+    # Build HTML Layout (Left to Right Flow)
+    html_parts = [
+        '<div style="display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 0px; overflow-x: auto; padding: 30px 10px; width: 100%;">',
+        
+        # Col 1: PurpleTeam
+        '<div>', render_card("PurpleTeam"), '</div>',
+        
+        # Col 2: Arrow: Purple -> Warehouse
+        '<div>', render_svg_arrow("straight", 0), '</div>',
+        
+        # Col 3: Warehouse -> DetectionEng (Vertical Stack)
+        '<div style="display: flex; flex-direction: column; align-items: center; gap: 0px;">',
+        render_card("Warehouse"),
+        render_svg_arrow("arrow_down", 1),
+        render_card("DetectionEng"),
+        '</div>',
+        
+        # Col 4: Merge Arrows (Warehouse -> Engine, Detection -> Engine)
+        '<div style="display: flex; flex-direction: column; gap: 0px; justify-content: center;">',
+        render_svg_arrow("curve_down", 1), # Warehouse -> Engine
+        render_svg_arrow("curve_up", 2),   # Detection -> Engine
+        '</div>',
+        
+        # Col 5: Engine
+        '<div>', render_card("Engine"), '</div>',
+        
+        # Col 6: Arrow: Engine -> Triage
+        '<div>', render_svg_arrow("straight", 3), '</div>',
+        
+        # Col 7: Triage
+        '<div>', render_card("Triage"), '</div>',
+        
+        # Col 8: Split Arrows: Triage -> Forensics/Commander
+        '<div style="display: flex; flex-direction: column; gap: 0px; justify-content: center;">',
+        render_svg_arrow("curve_up", 4),
+        render_svg_arrow("curve_down", 4),
+        '</div>',
+        
+        # Col 9: Parallel Ops: Forensics, Commander
+        '<div style="display: flex; flex-direction: column; gap: 30px;">',
+        render_card("Forensics"),
+        render_card("Commander"),
+        '</div>',
+        
+        # Col 10: Merge Arrows: Forensics/Commander -> Reporter
+        '<div style="display: flex; flex-direction: column; gap: 0px; justify-content: center;">',
+        render_svg_arrow("curve_down", 5),
+        render_svg_arrow("curve_up", 5),
+        '</div>',
+        
+        # Col 11: Reporter
+        '<div>', render_card("Reporter"), '</div>',
+        
+        '</div>'
     ]
     
-    # Start container
-    html_parts = ['<div style="display: flex; justify-content: space-between; margin-bottom: 20px; gap: 10px;">']
-    
-    for agent in agents:
-        is_active = (agent['id'] == active_agent)
-        bg_color = "#e6f3ff" if is_active else "#f0f2f6"
-        border_color = "#2196F3" if is_active else "#e0e0e0"
-        opacity = "1.0" if is_active or active_agent is None else "0.6"
-        status_text = "正在工作中..." if is_active else "待命"
-        status_color = "#2196F3" if is_active else "#666"
-        box_shadow = '0 4px 6px rgba(0,0,0,0.1)' if is_active else 'none'
-        
-        # Build card HTML in a single line to avoid markdown indentation issues
-        card = (
-            f'<div style="flex: 1; background-color: {bg_color}; border: 2px solid {border_color}; '
-            f'border-radius: 10px; padding: 15px; text-align: center; opacity: {opacity}; '
-            f'transition: all 0.3s ease; box-shadow: {box_shadow};">'
-            f'<div style="font-size: 32px; margin-bottom: 10px;">{agent["icon"]}</div>'
-            f'<div style="font-weight: bold; font-size: 16px; color: #31333F;">{agent["name"]}</div>'
-            f'<div style="font-size: 12px; color: #666; margin-bottom: 8px;">{agent["role"]}</div>'
-            f'<div style="font-size: 12px; color: {status_color}; font-weight: bold; '
-            f'background-color: rgba(255,255,255,0.5); padding: 4px 8px; border-radius: 12px; display: inline-block;">'
-            f'{status_text}</div></div>'
-        )
-        html_parts.append(card)
-        
-    html_parts.append('</div>')
-    
-    # Join with no newlines to be safe
     final_html = "".join(html_parts)
-    
     agents_placeholder.markdown(final_html, unsafe_allow_html=True)
 
 def render_agent_logs(logs):
@@ -476,11 +591,51 @@ def start_simulation(alerts, status_msg):
         pass
     st.rerun()
 
-if apt_btn:
-    start_simulation(apt_alerts, "Running Lazarus APT Scenario...")
 
-if custom_run_btn:
-    start_simulation(st.session_state['custom_scenario'], "Running Custom Scenario...")
+
+if purple_btn and purple_scenario:
+    # Initialize agent temporarily to run prep
+    temp_agent = Agent(
+        deepseek_api_key=st.session_state.get('deepseek_api_key'),
+        virustotal_api_key=st.session_state.get('virustotal_api_key')
+    )
+    
+    st.session_state['agent_history'] = []
+    
+    # Step 1: Generate Telemetry
+    with st.spinner("Step 1/3: 紫队正在生成攻击遥测数据..."):
+        telemetry = temp_agent.run_purple_step1_gen_data(purple_scenario, stream_callback=stream_callback)
+        if telemetry:
+            st.session_state['telemetry_data'] = telemetry
+            st.success(f"✅ 数据入库完成！生成 {len(telemetry)} 条遥测日志。")
+            time.sleep(1)
+        else:
+            st.error("遥测生成失败")
+            st.stop()
+
+    # Step 2: Develop Rules
+    with st.spinner("Step 2/3: 检测工程师正在开发规则..."):
+        rules = temp_agent.run_purple_step2_dev_rules(telemetry, purple_scenario, stream_callback=stream_callback)
+        if rules:
+            st.session_state['generated_rules'] = rules
+            st.success(f"✅ 规则开发完成！产出 {len(rules)} 条检测规则。")
+            time.sleep(1)
+        else:
+            st.error("规则开发失败")
+            st.stop()
+
+    # Step 3: Engine Scan
+    with st.spinner("Step 3/3: 分析引擎正在扫描数仓..."):
+        alerts = temp_agent.run_purple_step3_engine_scan(rules, telemetry, stream_callback=stream_callback)
+        if alerts:
+            st.success(f"✅ 威胁检测完成！触发 {len(alerts)} 条告警。")
+            time.sleep(1)
+            start_simulation(alerts, "Running Purple Team Scenario...")
+        else:
+            st.warning("未触发任何告警 (漏报)")
+            st.stop()
+
+
 
 # Persist state on rerun (Render UI before processing)
 render_alert_queue()
@@ -489,6 +644,81 @@ render_decision_history()
 # Always render logs, even if empty, to show the box
 render_agent_logs(st.session_state.get('agent_history', []))
 render_active_agents(st.session_state.get('agent_history', []))
+
+# Telemetry Data View (Security Data Warehouse)
+st.markdown("---")
+st.subheader("🗄️ 安全数仓 (Security Data Warehouse)")
+
+if 'telemetry_data' in st.session_state and st.session_state['telemetry_data']:
+    telemetry_list = st.session_state['telemetry_data']
+    
+    # Convert OCSF objects to dicts for display
+    table_data = []
+    for t in telemetry_list:
+        try:
+            # Handle both dict and Pydantic model
+            t_dict = t.model_dump() if hasattr(t, 'model_dump') else t
+            
+            # Helper for safe nested get
+            def safe_get(d, keys, default='N/A'):
+                current = d
+                for k in keys:
+                    if isinstance(current, dict):
+                        current = current.get(k)
+                    elif hasattr(current, k):
+                        current = getattr(current, k)
+                    else:
+                        return default
+                    
+                    if current is None:
+                        return default
+                return current
+
+            # Extract key fields for the summary table
+            row = {
+                "Time": safe_get(t_dict, ['metadata', 'time']),
+                "Class": safe_get(t_dict, ['class_name'], 'Unknown'),
+                "Activity": safe_get(t_dict, ['activity_id']),
+                "Source IP": safe_get(t_dict, ['src_endpoint', 'ip']),
+                "Dest IP": safe_get(t_dict, ['dst_endpoint', 'ip']),
+                "Process": safe_get(t_dict, ['actor', 'process', 'name']),
+                "User": safe_get(t_dict, ['actor', 'user', 'name'])
+            }
+            table_data.append(row)
+        except Exception as e:
+            print(f"Error processing telemetry row: {e}")
+            continue
+        
+    if table_data:
+        df = pd.DataFrame(table_data)
+        with st.expander("📊 遥测数据概览 (Telemetry Overview)", expanded=True):
+            st.dataframe(df, use_container_width=True)
+    else:
+        st.info("暂无遥测数据可展示")
+else:
+    with st.expander("📊 遥测数据概览 (Telemetry Overview)", expanded=True):
+        st.info("等待紫队生成数据入库...")
+
+# Detection Engineering Workspace (Rendered in Row 1 Col 1)
+if 'generated_rules' in st.session_state and st.session_state['generated_rules']:
+    with detection_workspace_placeholder.container():
+        rules = st.session_state['generated_rules']
+        
+        tab1, tab2 = st.tabs(["📜 规则列表", "💻 JSON 代码"])
+        
+        with tab1:
+            for r in rules:
+                # Handle Pydantic v1/v2
+                r_dict = r.model_dump() if hasattr(r, 'model_dump') else r.dict()
+                st.info(f"**{r_dict.get('title', 'Untitled')}**\n\nSeverity: {r_dict.get('severity', 'Low')}")
+                
+        with tab2:
+            # Show all rules JSON
+            rules_json = [r.model_dump() if hasattr(r, 'model_dump') else r.dict() for r in rules]
+            st.json(rules_json, expanded=False)
+else:
+    with detection_workspace_placeholder.container():
+        st.info("等待检测工程师产出规则...")
 
 if 'agent_report' in st.session_state and st.session_state['agent_report']:
     report_placeholder.markdown(st.session_state['agent_report'])
